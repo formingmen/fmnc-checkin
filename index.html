@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Forming Men National Conference — Check-In</title>
+  <style>
+    html, body {
+      margin: 0;
+      padding: 0;
+      height: 100%;
+      background: #282828;
+      overflow: hidden;
+    }
+    iframe {
+      width: 100%;
+      height: 100%;
+      border: none;
+      display: block;
+    }
+  </style>
+</head>
+<body>
+  <!--
+    This page just embeds the real check-in system (hosted on Google Apps
+    Script) inside an iframe. The only reason it exists is that Google shows
+    a "This application was created by a Google Apps Script user" banner
+    when someone visits the script.google.com link directly, but not when
+    the same content is embedded via an iframe on another page. Everything
+    else — the QR scanning, the check-in logic, the Google Sheet — still
+    happens entirely on Google's side; this page has no logic of its own
+    beyond forwarding the link along.
+
+    IMPORTANT: If you ever redeploy the Apps Script project as a genuinely
+    NEW deployment (a different URL, not just a new version of the existing
+    one), update BASE_URL below to match.
+  -->
+  <iframe id="appFrame" title="Forming Men National Conference Check-In"></iframe>
+  <script>
+    var BASE_URL = 'https://script.google.com/macros/s/AKfycbwI87B8TTmJ9tqH1ArtMR_wMt-hZOADARFclf8qkwQ3yGzZmK5BwHb-K_krm8R9DGPf/exec';
+    // Forward along whatever query string this page was opened with
+    // (e.g. ?ticket=FMNC26-0002 or ?checkin=FMNC26-0002) to the real app.
+    document.getElementById('appFrame').src = BASE_URL + window.location.search;
+  </script>
+</body>
+</html>
