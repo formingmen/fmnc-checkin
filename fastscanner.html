@@ -98,6 +98,11 @@
     text-align: center; font-size: 13px; color: #d8d6c9;
     padding: 0 24px;
   }
+  /* Live status ("Hold steady…", "Checking in…") so volunteers can see the
+     code is lined up before the result comes back. */
+  #hint.active { color: #fff; font-weight: 500; animation: hintPulse 1s ease-in-out infinite; }
+  @keyframes hintPulse { 50% { opacity: 0.55; } }
+  @media (prefers-reduced-motion: reduce) { #hint.active { animation: none; } }
 
   /* ---------- Result flash (individual) ---------- */
   #resultSheet {
@@ -441,7 +446,18 @@
   var frameCount = 0;
   var lastFoundAt = 0;
 
-    // Maps the on-screen viewfinder box to video pixels. The video uses
+  // ---------- On-screen status under the viewfinder ----------
+  // Shows "Hold steady…" / "Checking in…" so volunteers can see the
+  // scanner has the code lined up before the result comes back.
+  var DEFAULT_HINT = "Hold a ticket's QR code inside the frame";
+  var hintEl = document.getElementById('hint');
+  function setHint(text) {
+    var t = text || DEFAULT_HINT;
+    if (hintEl.textContent !== t) hintEl.textContent = t;
+    hintEl.classList.toggle('active', !!text);
+  }
+
+  // Maps the on-screen viewfinder box to video pixels. The video uses
   // object-fit: cover, so it's scaled up and cropped at the edges; this
   // undoes that so we decode ONLY what's inside the frame. Without this,
   // jsQR read the whole camera image and could grab a neighboring ticket.
@@ -459,7 +475,7 @@
   }
 
   // Require the same code in 2 quick back-to-back reads before checking in,
-  // so a code that just flashes past the edge never fires.
+  // so a code that just flashes past the edge of the frame never fires.
   var candidate = '', candidateHits = 0, candidateAt = 0;
   var HITS_NEEDED = 2;
 
@@ -476,8 +492,8 @@
           ctx.drawImage(video, r.x, r.y, r.w, r.h, 0, 0, r.w, r.h);
           var imageData = ctx.getImageData(0, 0, r.w, r.h);
           var code = jsQR(imageData.data, imageData.width, imageData.height, { inversionAttempts: 'dontInvert' });
+          var now = Date.now();
           if (code && code.data) {
-            var now = Date.now();
             if (code.data === candidate && (now - candidateAt) < 700) candidateHits++;
             else { candidate = code.data; candidateHits = 1; }
             candidateAt = now;
@@ -487,13 +503,21 @@
             if (candidateHits >= HITS_NEEDED) {
               candidateHits = 0;
               handleDecodedText(code.data);
+            } else {
+              setHint('Hold steady…');
             }
-          } else if (frameCount % 10 === 0) {
-            debugInfo.textContent = 'frames:' + frameCount + ' crop:' + r.w + 'x' + r.h +
-              ' lastFound:' + (lastFoundAt || 'never') + ' busy:' + busy;
+          } else {
+            // Nothing readable for a moment — return to the normal prompt.
+            if ((now - candidateAt) > 600) setHint();
+            if (frameCount % 10 === 0) {
+              debugInfo.textContent = 'frames:' + frameCount + ' crop:' + r.w + 'x' + r.h +
+                ' lastFound:' + (lastFoundAt || 'never') + ' busy:' + busy;
+            }
           }
         }
       } else if (frameCount % 10 === 0 && !busy) {
+        // Only narrate "waiting on camera" here — once busy is true, a
+        // fetch is in flight and fastCheckin/showResult own this text.
         debugInfo.textContent = 'frames:' + frameCount + ' video:' + vw + 'x' + vh + ' readyState:' + video.readyState + ' busy:' + busy + ' (waiting)';
       }
     } catch (err) {
@@ -502,6 +526,7 @@
     }
     requestAnimationFrame(scanLoop);
   }
+
   // ---------- Decoding a scanned URL ----------
   function handleDecodedText(text) {
     var now = Date.now();
@@ -543,6 +568,7 @@
   function fastCheckin(ticketId) {
     var apiUrl = API_BASE + '?fastcheckin=' + encodeURIComponent(ticketId) + '&vol=' + encodeURIComponent(volunteerName);
     debugInfo.textContent = 'fetching: ' + apiUrl;
+    setHint('Checking in…');
 
     jsonpRequest(apiUrl).then(function (res) {
       debugInfo.textContent = 'got response for ' + ticketId;
@@ -585,6 +611,7 @@
       resSub.textContent = res.detail || 'Check your signal and try again';
       holdTime = 6000; // hold long enough to actually read/screenshot the detail
     }
+    setHint();
     resultSheet.classList.add('show');
     setTimeout(function () {
       resultSheet.classList.remove('show');
@@ -599,6 +626,7 @@
   function openGroupOverlay(email) {
     var apiUrl = API_BASE + '?groupinfo=' + encodeURIComponent(email);
     debugInfo.textContent = 'fetching group info: ' + apiUrl;
+    setHint('Loading group…');
     jsonpRequest(apiUrl, 12000).then(function (res) {
       debugInfo.textContent = 'got group info: ' + (res.tickets ? res.tickets.length : 0) + ' tickets';
       if (res.status !== 'ok') {
@@ -644,6 +672,7 @@
   function closeGroupOverlay() {
     groupOverlay.classList.remove('show');
     viewfinder.classList.remove('locked');
+    setHint();
     busy = false;
   }
 
