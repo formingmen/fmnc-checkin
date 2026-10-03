@@ -441,30 +441,59 @@
   var frameCount = 0;
   var lastFoundAt = 0;
 
+    // Maps the on-screen viewfinder box to video pixels. The video uses
+  // object-fit: cover, so it's scaled up and cropped at the edges; this
+  // undoes that so we decode ONLY what's inside the frame. Without this,
+  // jsQR read the whole camera image and could grab a neighboring ticket.
+  function getCropRect(vw, vh) {
+    var vr = video.getBoundingClientRect();
+    var gr = viewfinder.getBoundingClientRect();
+    var scale = Math.max(vr.width / vw, vr.height / vh);
+    var offX = (vw * scale - vr.width) / 2;
+    var offY = (vh * scale - vr.height) / 2;
+    var x = Math.max(0, Math.floor((gr.left - vr.left + offX) / scale));
+    var y = Math.max(0, Math.floor((gr.top - vr.top + offY) / scale));
+    var w = Math.min(vw - x, Math.floor(gr.width / scale));
+    var h = Math.min(vh - y, Math.floor(gr.height / scale));
+    return { x: x, y: y, w: w, h: h };
+  }
+
+  // Require the same code in 2 quick back-to-back reads before checking in,
+  // so a code that just flashes past the edge never fires.
+  var candidate = '', candidateHits = 0, candidateAt = 0;
+  var HITS_NEEDED = 2;
+
   function scanLoop() {
     if (!scanning) return;
     try {
       frameCount++;
       var vw = video.videoWidth, vh = video.videoHeight;
       if (video.readyState === video.HAVE_ENOUGH_DATA && vw > 0 && vh > 0 && !busy) {
-        canvas.width = vw;
-        canvas.height = vh;
-        ctx.drawImage(video, 0, 0, vw, vh);
-        var imageData = ctx.getImageData(0, 0, vw, vh);
-        var code = jsQR(imageData.data, imageData.width, imageData.height, { inversionAttempts: 'dontInvert' });
-        if (code && code.data) {
-          lastFoundAt = frameCount;
-          debugInfo.textContent = 'frames:' + frameCount + ' video:' + vw + 'x' + vh + ' FOUND:"' + code.data.slice(0,40) + '"';
-          handleDecodedText(code.data);
-        } else if (frameCount % 10 === 0) {
-          debugInfo.textContent = 'frames:' + frameCount + ' video:' + vw + 'x' + vh + ' lastFound:' + (lastFoundAt || 'never') + ' busy:' + busy;
+        var r = getCropRect(vw, vh);
+        if (r.w > 0 && r.h > 0) {
+          canvas.width = r.w;
+          canvas.height = r.h;
+          ctx.drawImage(video, r.x, r.y, r.w, r.h, 0, 0, r.w, r.h);
+          var imageData = ctx.getImageData(0, 0, r.w, r.h);
+          var code = jsQR(imageData.data, imageData.width, imageData.height, { inversionAttempts: 'dontInvert' });
+          if (code && code.data) {
+            var now = Date.now();
+            if (code.data === candidate && (now - candidateAt) < 700) candidateHits++;
+            else { candidate = code.data; candidateHits = 1; }
+            candidateAt = now;
+            lastFoundAt = frameCount;
+            debugInfo.textContent = 'frames:' + frameCount + ' crop:' + r.w + 'x' + r.h +
+              ' FOUND(' + candidateHits + '/' + HITS_NEEDED + '):"' + code.data.slice(0, 40) + '"';
+            if (candidateHits >= HITS_NEEDED) {
+              candidateHits = 0;
+              handleDecodedText(code.data);
+            }
+          } else if (frameCount % 10 === 0) {
+            debugInfo.textContent = 'frames:' + frameCount + ' crop:' + r.w + 'x' + r.h +
+              ' lastFound:' + (lastFoundAt || 'never') + ' busy:' + busy;
+          }
         }
       } else if (frameCount % 10 === 0 && !busy) {
-        // Only narrate "waiting on camera" here — once busy is true, a
-        // fetch is in flight and fastCheckin/showResult own this text
-        // instead. Without this guard, this line was overwriting the
-        // "fetching:"/"FETCH ERROR:" messages every few frames, which is
-        // why they were never actually visible in a screenshot before.
         debugInfo.textContent = 'frames:' + frameCount + ' video:' + vw + 'x' + vh + ' readyState:' + video.readyState + ' busy:' + busy + ' (waiting)';
       }
     } catch (err) {
@@ -473,7 +502,6 @@
     }
     requestAnimationFrame(scanLoop);
   }
-
   // ---------- Decoding a scanned URL ----------
   function handleDecodedText(text) {
     var now = Date.now();
